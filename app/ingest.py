@@ -4,6 +4,7 @@ import json
 import hashlib
 import logging
 from google import genai
+from tenacity import retry, stop_after_attempt, wait_exponential
 from db import get_conn, init_db
 from dotenv import load_dotenv
 load_dotenv(dotenv_path="../.env")
@@ -11,6 +12,12 @@ load_dotenv(dotenv_path="../.env")
 logger = logging.getLogger(__name__)
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+
+
+@retry(stop=stop_after_attempt(4), wait=wait_exponential(multiplier=2, min=2, max=20), reraise=True)
+def _generate_content(**kwargs):
+    """Wraps Gemini generate_content with retry + exponential backoff for transient 503s."""
+    return client.models.generate_content(**kwargs)
 
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "embed_cache.json")
 
@@ -62,10 +69,7 @@ Important instructions:
 - Preserve all content verbatim including numbers, names and dates
 - Do not skip pages even if they appear to be mostly visual"""
 
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=[file, prompt]
-    )
+    response = _generate_content(model="gemini-3.5-flash-lite", contents=[file, prompt])
 
     raw = response.text
     pages = []

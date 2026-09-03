@@ -4,6 +4,7 @@ import json
 import hashlib
 import logging
 from google import genai
+from tenacity import retry, stop_after_attempt, wait_exponential
 from db import get_conn
 from ingest import embed
 from dotenv import load_dotenv
@@ -12,6 +13,12 @@ load_dotenv(dotenv_path="../.env")
 logger = logging.getLogger(__name__)
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+
+
+@retry(stop=stop_after_attempt(4), wait=wait_exponential(multiplier=2, min=2, max=20), reraise=True)
+def _generate_content(**kwargs):
+    """Wraps Gemini generate_content with retry + exponential backoff for transient 503s."""
+    return client.models.generate_content(**kwargs)
 
 # ── answer cache ──────────────────────────────────────────────────────────────
 # in-memory cache — returns identical queries instantly with 0 API calls
@@ -91,11 +98,7 @@ Passages:
 Scores:"""
 
     try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config={"temperature": 0.1}
-        )
+        response = _generate_content(model="gemini-3.5-flash-lite", contents=prompt, config={"temperature": 0.1})
         raw = response.text.strip()
 
         # extract JSON array from response
@@ -231,10 +234,7 @@ Context:
 Question: {query}"""
 
     try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
+        response = _generate_content(model="gemini-3.5-flash-lite", contents=prompt)
     except Exception as e:
         logger.error("Answer generation failed: %s", e)
         raise
